@@ -29,9 +29,8 @@ os.makedirs("results", exist_ok=True)
 # ==========================================
 # 確定預測日（前一個交易日）
 # ==========================================
-base_date = datetime.utcnow() + timedelta(hours=8)  # 轉台灣時間
-base_date = base_date - timedelta(days=1)
-while base_date.weekday() >= 5:                      # 跳過週末
+base_date = datetime.utcnow() + timedelta(hours=8) - timedelta(days=1)
+while base_date.weekday() >= 5:
     base_date -= timedelta(days=1)
 
 print(f"📅 預測基準日：{base_date.strftime('%Y-%m-%d')}")
