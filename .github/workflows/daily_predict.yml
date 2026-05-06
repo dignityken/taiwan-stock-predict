@@ -2,8 +2,8 @@ name: 每日選股預測
 
 on:
   schedule:
-    - cron: '0 17 * * 0-4'
-  workflow_dispatch:
+    - cron: '0 17 * * 0-4'   # UTC 17:00 = 台灣時間 01:00，週一～週五
+  workflow_dispatch:           # 允許手動觸發（使用當下前一個交易日）
 
 jobs:
   predict:
