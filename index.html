@@ -381,7 +381,9 @@ function renderResults(rows, nDays, startDate) {
   const abAll   = rows.filter(r => r['等級'] === 'A 強訊號' || r['等級'] === 'B XGB獨立');
   const dayCols = [];
   for (let d = 1; d <= nDays; d++) dayCols.push(`D${d}_高漲%`, `D${d}_收漲%`);
-  const cols = ['等級','代號','股名','XGB信心%','Tree信心%','預測日收盤',
+  const hasFuturesCol = abAll.some(r => r['有期貨'] != null);
+  const cols = ['等級','代號','股名', ...(hasFuturesCol ? ['有期貨'] : []),
+                'XGB信心%','Tree信心%','預測日收盤',
                 ...dayCols, '區間最高漲%','區間收盤漲%','達標(1.5%)'];
 
   document.getElementById('detailHead').innerHTML =
