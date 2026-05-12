@@ -27,6 +27,27 @@ URLS = {
 os.makedirs("results", exist_ok=True)
 
 # ==========================================
+# 抓 TAIFEX 個股期貨標的清單
+# ==========================================
+def get_futures_stocks():
+    try:
+        res = requests.get(
+            "https://www.taifex.com.tw/cht/2/stockLists",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10
+        )
+        res.encoding = "utf-8"
+        sids = re.findall(r'<td[^>]*>\s*(\d{4})\s*</td>', res.text)
+        result = set(sids)
+        print(f"📋 TAIFEX 個股期貨標的：{len(result)} 檔")
+        return result
+    except Exception as e:
+        print(f"⚠️ 無法取得期貨標的清單：{e}")
+        return set()
+
+futures_stocks = get_futures_stocks()
+
+# ==========================================
 # 確定預測日（前一個交易日）
 # ==========================================
 base_date = datetime.utcnow() + timedelta(hours=8) - timedelta(days=1)
@@ -203,6 +224,7 @@ def analyze_stock(item, base_date):
 
     return {
         "等級": grade, "代號": sid, "股名": sname,
+        "有期貨": "✅" if sid in futures_stocks else "",
         "XGB信心%": xgb_prob, "Tree信心%": tree_prob,
         "xgboost": xgb_pred, "s_Tree": tree_pred,
         "預測日收盤": close_px,
