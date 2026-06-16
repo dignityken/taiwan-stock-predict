@@ -5,6 +5,9 @@ on:
     - cron: '0 17 * * 0-4'   # UTC 17:00 = 台灣時間 01:00，週一～週五
   workflow_dispatch:           # 允許手動觸發（使用當下前一個交易日）
 
+permissions:
+  contents: write
+
 jobs:
   predict:
     runs-on: ubuntu-latest
@@ -62,10 +65,33 @@ jobs:
 
           caption="每日選股截圖：$(basename "$STOCK_IMAGE" .png)"
 
-          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+          response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
             -F chat_id="${TELEGRAM_CHAT_ID}" \
             -F caption="${caption}" \
-            -F photo=@"${STOCK_IMAGE}"
+            -F photo=@"${STOCK_IMAGE}")
+
+          echo "$response"
+
+          RESPONSE="$response" python - <<'PY'
+          import json
+          import os
+          import sys
+
+          response = os.environ["RESPONSE"]
+
+          try:
+              data = json.loads(response)
+          except Exception:
+              print("Telegram response is not valid JSON")
+              sys.exit(1)
+
+          if not data.get("ok"):
+              print("Telegram sendPhoto failed:")
+              print(data)
+              sys.exit(1)
+
+          print("Telegram image sent successfully.")
+          PY
 
       - name: Commit results
         run: |
