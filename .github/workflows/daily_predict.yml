@@ -23,15 +23,56 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Chinese font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-wqy-zenhei
+
       - name: Run prediction
         env:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python predict.py
 
+      - name: Export sheet 2 image
+        run: |
+          latest_xlsx=$(ls -t results/*.xlsx | head -1)
+          png_path="${latest_xlsx%.xlsx}_B_XGB獨立.png"
+
+          echo "Latest Excel: $latest_xlsx"
+          echo "Output PNG: $png_path"
+
+          python scripts/export_stock_snapshot.py "$latest_xlsx" "$png_path"
+
+          echo "STOCK_IMAGE=$png_path" >> "$GITHUB_ENV"
+
+      - name: Send Telegram image
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram secrets are not set. Skip sending image."
+            exit 0
+          fi
+
+          if [ ! -f "$STOCK_IMAGE" ]; then
+            echo "Stock image not found: $STOCK_IMAGE"
+            exit 1
+          fi
+
+          caption="每日選股截圖：$(basename "$STOCK_IMAGE" .png)"
+
+          curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+            -F chat_id="${TELEGRAM_CHAT_ID}" \
+            -F caption="${caption}" \
+            -F photo=@"${STOCK_IMAGE}"
+
       - name: Commit results
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add results/
+
           git diff --cached --quiet || git commit -m "📊 自動選股結果 $(date -u +%Y-%m-%d --date='8 hours')"
           git push
