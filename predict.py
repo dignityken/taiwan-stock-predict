@@ -5,7 +5,7 @@
 import requests
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import precision_score
+from sklearn.metrics import average_precision_score, precision_score
 from xgboost import XGBClassifier
 from model_utils import prepare_training_data
 import time, re, os
@@ -26,6 +26,15 @@ URLS = {
     "上市買超": "https://fubon-ebrokerdj.fbs.com.tw/Z/ZG/ZG_F.djhtm",
     "上櫃買超": "https://fubon-ebrokerdj.fbs.com.tw/z/zg/zg_F_1_1.djhtm",
 }
+
+FEATURES = [
+    '價差對比', '持股比例差異', '買賣超張數', '實際差異數',
+    '控一', '控二', '控三', '借券潛在', '本2%張數', '開收比'
+]
+LIMIT_FEATURES = [
+    '價差對比', '持股比例差異', '買賣超比', '實際差異比',
+    '控一比', '控二比', '控三比', '借券潛在比', '成交量比5日', '開收比'
+]
 
 os.makedirs("results", exist_ok=True)
 
@@ -180,18 +189,21 @@ def analyze_stock(item, base_date):
     df['本2%張數']    = df['總股本'] * 0.02
     df['開收比']      = ((df['open'] - df['close'].shift(1)) /
                          (df['close'].shift(1) + 0.001)).round(4)
+    volume_lots = df['Trading_Volume'] / 1000
+    df['買賣超比'] = df['買賣超張數'] / (volume_lots + 1)
+    df['實際差異比'] = df['實際差異數'] / (volume_lots + 1)
+    df['控一比'] = df['控一'] / (volume_lots + 1)
+    df['控二比'] = df['控二'] / (volume_lots.rolling(5).sum() + 1)
+    df['控三比'] = df['控三'] / (df['close'] + 0.001)
+    df['借券潛在比'] = df['借券潛在'] / (df['本2%張數'] + 1)
+    df['成交量比5日'] = volume_lots / (volume_lots.rolling(5).mean() + 1)
 
-    features = [
-        '價差對比', '持股比例差異', '買賣超張數', '實際差異數',
-        '控一', '控二', '控三', '借券潛在', '本2%張數', '開收比'
-    ]
-
-    train_df, today_row, prediction_date = prepare_training_data(df, features, base_date)
+    train_df, today_row, prediction_date = prepare_training_data(df, FEATURES, base_date)
 
     if len(train_df) < 100 or len(train_df['Target'].unique()) < 2:
         return None
 
-    X, y = train_df[features], train_df['Target'].astype(int)
+    X, y = train_df[FEATURES], train_df['Target'].astype(int)
 
     def new_xgb(labels):
         scale = max((labels == 0).sum() / max((labels == 1).sum(), 1), 1.0)
@@ -226,7 +238,7 @@ def analyze_stock(item, base_date):
     if today_row.empty:
         return None
 
-    latest   = today_row[features].fillna(0)
+    latest   = today_row[FEATURES].fillna(0)
     close_px = float(today_row['close'].values[0])
     xgb_pred = int(xgb_model.predict(latest)[0])
     xgb_prob = round(float(xgb_model.predict_proba(latest)[0][1]) * 100, 1)
@@ -238,7 +250,7 @@ def analyze_stock(item, base_date):
     elif xgb_pred == 0 and tree_pred == 1: grade = "C Tree獨立"
     else:                                   grade = "D 無訊號"
 
-    return {
+    result = {
         "等級": grade, "代號": sid, "股名": sname,
         "有期貨": "✅" if sid in futures_stocks else "",
         "XGB信心%": xgb_prob, "Tree信心%": tree_prob,
@@ -253,6 +265,12 @@ def analyze_stock(item, base_date):
         "控一": float(today_row['控一'].values[0]),
         "買超排名": item['rank'],
     }
+    limit_train, limit_latest, _ = prepare_training_data(
+        df, LIMIT_FEATURES, prediction_date, target_return=0.095
+    )
+    limit_train["代號"] = sid
+    limit_latest["代號"] = sid
+    return result, limit_train, limit_latest
 
 # ==========================================
 # 主流程
@@ -262,12 +280,16 @@ total    = len(universe)
 print(f"\n🔥 開始分析 {total} 檔...\n")
 
 final_results, failed = [], []
+limit_training_rows, limit_latest_rows = [], []
 for i, item in enumerate(universe):
     print(f"[{i+1}/{total}] {item['sid']} {item['sname']}...", end='  ')
     try:
-        res = analyze_stock(item, base_date)
-        if res:
+        analyzed = analyze_stock(item, base_date)
+        if analyzed:
+            res, limit_train, limit_latest = analyzed
             final_results.append(res)
+            limit_training_rows.append(limit_train)
+            limit_latest_rows.append(limit_latest)
             print(f"✅ {res['等級']}")
         else:
             failed.append(item['sid'])
@@ -285,6 +307,49 @@ if not final_results:
     exit(1)
 
 result_df = pd.DataFrame(final_results)
+
+# Pooled model: limit-up events are too rare to train one useful model per stock.
+limit_df = pd.concat(limit_training_rows, ignore_index=True).sort_values('Date')
+limit_latest_df = pd.concat(limit_latest_rows, ignore_index=True)
+limit_y = limit_df['Target'].astype(int)
+if limit_y.sum() >= 20 and len(limit_y.unique()) == 2:
+    def new_limit_model(labels):
+        scale = max((labels == 0).sum() / max((labels == 1).sum(), 1), 1.0)
+        return XGBClassifier(
+            n_estimators=150, max_depth=3, learning_rate=0.05,
+            scale_pos_weight=scale, random_state=42,
+            eval_metric='logloss', verbosity=0, n_jobs=2
+        )
+
+    dates = limit_df['Date'].drop_duplicates().sort_values()
+    validation_start = dates.iloc[int(len(dates) * 0.8)]
+    before = limit_df['Date'] < validation_start
+    validation_y = limit_y[~before]
+    if limit_y[before].sum() >= 10 and validation_y.sum() > 0:
+        validation_model = new_limit_model(limit_y[before])
+        validation_model.fit(limit_df.loc[before, LIMIT_FEATURES], limit_y[before])
+        validation_score = validation_model.predict_proba(
+            limit_df.loc[~before, LIMIT_FEATURES]
+        )[:, 1]
+        limit_ap = average_precision_score(validation_y, validation_score)
+    else:
+        limit_ap = None
+
+    limit_model = new_limit_model(limit_y)
+    limit_model.fit(limit_df[LIMIT_FEATURES], limit_y)
+    limit_latest_df['漲停候選分數%'] = (
+        limit_model.predict_proba(limit_latest_df[LIMIT_FEATURES].fillna(0))[:, 1] * 100
+    ).round(1)
+    result_df = result_df.merge(
+        limit_latest_df[['代號', '漲停候選分數%']], on='代號', how='left'
+    )
+    result_df['漲停模型驗證AP%'] = round(limit_ap * 100, 1) if limit_ap is not None else pd.NA
+    result_df['漲停樣本基準率%'] = round(float(limit_y.mean()) * 100, 2)
+else:
+    result_df['漲停候選分數%'] = pd.NA
+    result_df['漲停模型驗證AP%'] = pd.NA
+    result_df['漲停樣本基準率%'] = pd.NA
+
 grade_order = {"A 強訊號": 0, "B XGB獨立": 1, "C Tree獨立": 2, "D 無訊號": 3}
 result_df['等級排序'] = result_df['等級'].map(grade_order)
 result_df = result_df.sort_values(
@@ -306,6 +371,9 @@ with pd.ExcelWriter(filename, engine='openpyxl') as writer:
     result_df[result_df['等級'] == 'A 強訊號'].to_excel(writer, sheet_name='A強訊號',    index=False)
     result_df[result_df['等級'] == 'B XGB獨立'].to_excel(writer, sheet_name='B_XGB獨立', index=False)
     result_df[result_df['等級'] == 'C Tree獨立'].to_excel(writer, sheet_name='C_Tree獨立',index=False)
+    result_df.sort_values('漲停候選分數%', ascending=False).head(20).to_excel(
+        writer, sheet_name='漲停候選', index=False
+    )
     result_df.to_excel(writer, sheet_name='全部', index=False)
 
 print(f"\n✅ 已儲存：{filename}")
