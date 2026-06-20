@@ -4,9 +4,10 @@
 """
 import requests
 import pandas as pd
-import numpy as np
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import precision_score
 from xgboost import XGBClassifier
+from model_utils import prepare_training_data
 import time, re, os
 from datetime import datetime, timedelta
 import warnings
@@ -17,7 +18,9 @@ pd.set_option('future.no_silent_downcasting', True)
 # ==========================================
 # 設定
 # ==========================================
-API_TOKEN = os.environ.get("FINMIND_TOKEN", "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wNC0wOSAwMDoxNjoyMCIsInVzZXJfaWQiOiJkaWduaXR5a2VuIiwiZW1haWwiOiJ6MDkxMjA5NjQ3MEBnbWFpbC5jb20iLCJpcCI6IjExOC4xNjkuMTQwLjE5OCJ9.x99Wo6d4oAFk0ALHY8q2zh7Huyd9SrWyMrRRc6I216E")
+API_TOKEN = os.environ.get("FINMIND_TOKEN")
+if not API_TOKEN:
+    raise RuntimeError("缺少 FINMIND_TOKEN 環境變數")
 
 URLS = {
     "上市買超": "https://fubon-ebrokerdj.fbs.com.tw/Z/ZG/ZG_F.djhtm",
@@ -183,30 +186,43 @@ def analyze_stock(item, base_date):
         '控一', '控二', '控三', '借券潛在', '本2%張數', '開收比'
     ]
 
-    base_dt  = pd.Timestamp(base_date).normalize()
-    train_df = df[df['Date'] <= base_dt].copy()
-    train_df['Target'] = np.where(
-        (train_df['max'].shift(-1) - train_df['close']) / train_df['close'] >= 0.015, 1, 0
-    )
-    train_df = train_df.dropna(subset=features + ['Target'])
+    train_df, today_row, prediction_date = prepare_training_data(df, features, base_date)
 
     if len(train_df) < 100 or len(train_df['Target'].unique()) < 2:
         return None
 
-    X, y = train_df[features], train_df['Target']
-    scale = max((y == 0).sum() / (y == 1).sum(), 1.0)
+    X, y = train_df[features], train_df['Target'].astype(int)
 
-    xgb_model = XGBClassifier(
-        n_estimators=100, max_depth=3, learning_rate=0.1,
-        scale_pos_weight=scale, random_state=42,
-        eval_metric='logloss', verbosity=0
-    )
+    def new_xgb(labels):
+        scale = max((labels == 0).sum() / max((labels == 1).sum(), 1), 1.0)
+        return XGBClassifier(
+            n_estimators=100, max_depth=3, learning_rate=0.1,
+            scale_pos_weight=scale, random_state=42,
+            eval_metric='logloss', verbosity=0, n_jobs=2
+        )
+
+    # ponytail: one chronological holdout is enough until walk-forward tuning is justified.
+    split = max(int(len(train_df) * 0.8), len(train_df) - 60)
+    split = min(split, len(train_df) - 20)
+    validation_y = y.iloc[split:]
+    validation_base_rate = float(validation_y.mean())
+    validation_train_y = y.iloc[:split]
+    if len(validation_train_y.unique()) > 1:
+        validation_model = new_xgb(validation_train_y)
+        validation_model.fit(X.iloc[:split], validation_train_y)
+        validation_pred = validation_model.predict(X.iloc[split:])
+        validation_precision = precision_score(validation_y, validation_pred, zero_division=0)
+    else:
+        validation_precision = 0.0
+
+    xgb_model = new_xgb(y)
     xgb_model.fit(X, y)
 
-    tree_model = DecisionTreeClassifier(max_depth=6, random_state=42, class_weight='balanced')
+    tree_model = DecisionTreeClassifier(
+        max_depth=6, min_samples_leaf=10, random_state=42, class_weight='balanced'
+    )
     tree_model.fit(X, y)
 
-    today_row = df[df['Date'] == base_dt]
     if today_row.empty:
         return None
 
@@ -227,6 +243,9 @@ def analyze_stock(item, base_date):
         "有期貨": "✅" if sid in futures_stocks else "",
         "XGB信心%": xgb_prob, "Tree信心%": tree_prob,
         "xgboost": xgb_pred, "s_Tree": tree_pred,
+        "模型資料日": prediction_date.strftime("%Y-%m-%d"),
+        "XGB驗證精準率%": round(validation_precision * 100, 1),
+        "驗證基準命中率%": round(validation_base_rate * 100, 1),
         "預測日收盤": close_px,
         "開收比": float(today_row['開收比'].values[0]),
         "實際差異數": float(today_row['實際差異數'].values[0]),
