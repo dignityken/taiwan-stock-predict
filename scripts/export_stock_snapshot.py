@@ -2,27 +2,32 @@ from pathlib import Path
 from openpyxl import load_workbook
 from PIL import Image, ImageDraw, ImageFont
 
-FONT_PATH = '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc'
+FONT_PATHS = [
+    '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+    'C:/Windows/Fonts/msjh.ttc',
+]
 
 
 def text_width(draw, text, font):
     return int(draw.textbbox((0, 0), str(text), font=font)[2])
 
 
-def export_sheet2_image(xlsx_path, output_path, sheet_index=1, max_cols=5):
+def export_stock_image(xlsx_path, output_path):
     wb = load_workbook(xlsx_path, data_only=True)
-    ws = wb.worksheets[sheet_index]
+    if '漲停候選' not in wb.sheetnames:
+        raise ValueError('找不到「漲停候選」工作表')
+    ws = wb['漲停候選']
+    columns = [1, 2, 3, 4, 18]  # 等級、代號、股名、有期貨、漲停候選分數%
 
-    # Capture columns A:E from row 1 through the last row that has data in A:E.
     last_row = 1
     for r in range(1, ws.max_row + 1):
-        if any(ws.cell(r, c).value not in (None, '') for c in range(1, max_cols + 1)):
+        if any(ws.cell(r, c).value not in (None, '') for c in columns):
             last_row = r
 
     data = []
     for r in range(1, last_row + 1):
         row = []
-        for c in range(1, max_cols + 1):
+        for c in columns:
             v = ws.cell(r, c).value
             if v is None:
                 v = ''
@@ -34,14 +39,17 @@ def export_sheet2_image(xlsx_path, output_path, sheet_index=1, max_cols=5):
             row.append(v)
         data.append(row)
 
-    font = ImageFont.truetype(FONT_PATH, 22)
-    header_font = ImageFont.truetype(FONT_PATH, 22)
+    font_path = next((p for p in FONT_PATHS if Path(p).exists()), None)
+    if not font_path:
+        raise FileNotFoundError('找不到中文字型')
+    font = ImageFont.truetype(font_path, 22)
+    header_font = ImageFont.truetype(font_path, 22)
     tmp_img = Image.new('RGB', (1, 1), 'white')
     draw = ImageDraw.Draw(tmp_img)
 
     # Auto-fit columns with padding. Keep it compact like the Excel crop.
     col_widths = []
-    for c in range(max_cols):
+    for c in range(len(columns)):
         widest = max(text_width(draw, row[c], header_font if i == 0 else font) for i, row in enumerate(data))
         col_widths.append(max(92, widest + 28))
 
@@ -75,4 +83,4 @@ def export_sheet2_image(xlsx_path, output_path, sheet_index=1, max_cols=5):
 
 if __name__ == '__main__':
     import sys
-    export_sheet2_image(sys.argv[1], sys.argv[2])
+    export_stock_image(sys.argv[1], sys.argv[2])

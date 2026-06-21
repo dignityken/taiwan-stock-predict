@@ -36,10 +36,10 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python predict.py
 
-      - name: Export sheet 2 image
+      - name: Export limit-up candidates image
         run: |
           latest_xlsx=$(ls -t results/*.xlsx | head -1)
-          png_path="${latest_xlsx%.xlsx}_B_XGB獨立.png"
+          png_path="${latest_xlsx%.xlsx}_漲停候選.png"
 
           echo "Latest Excel: $latest_xlsx"
           echo "Output PNG: $png_path"
