@@ -17,15 +17,14 @@ def export_stock_image(xlsx_path, output_path):
     if '漲停候選' not in wb.sheetnames:
         raise ValueError('找不到「漲停候選」工作表')
     ws = wb['漲停候選']
-    columns = [1, 2, 3, 4, 18]  # 等級、代號、股名、有期貨、漲停候選分數%
+    columns = [1, 2, 3, 5, 18]  # 等級、代號、股名、XGB信心%、漲停候選分數%
 
-    last_row = 1
-    for r in range(1, ws.max_row + 1):
-        if any(ws.cell(r, c).value not in (None, '') for c in columns):
-            last_row = r
-
+    rows = [1] + [
+        r for r in range(2, ws.max_row + 1)
+        if ws.cell(r, 1).value in ('A 強訊號', 'B XGB獨立')
+    ][:20]
     data = []
-    for r in range(1, last_row + 1):
+    for r in rows:
         row = []
         for c in columns:
             v = ws.cell(r, c).value
@@ -61,7 +60,12 @@ def export_stock_image(xlsx_path, output_path):
 
     img = Image.new('RGB', (w, h), 'white')
     draw = ImageDraw.Draw(img)
-    draw.text((margin, margin - 2), f'{Path(xlsx_path).stem}｜{ws.title}', fill=(40, 40, 40), font=header_font)
+    draw.text(
+        (margin, margin - 2),
+        f'{Path(xlsx_path).stem}｜XGB × 漲停候選',
+        fill=(40, 40, 40),
+        font=header_font
+    )
 
     y0 = margin + title_h
     grid = (205, 205, 205)
