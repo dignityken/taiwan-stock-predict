@@ -17,7 +17,7 @@ def export_stock_image(xlsx_path, output_path):
     if '漲停候選' not in wb.sheetnames:
         raise ValueError('找不到「漲停候選」工作表')
     ws = wb['漲停候選']
-    columns = [1, 2, 3, 5, 18]  # 等級、代號、股名、XGB信心%、漲停候選分數%
+    columns = [1, 2, 3, 4, 5, 18]  # 等級、代號、股名、有期貨、XGB信心%、漲停候選分數%
 
     rows = [1] + [
         r for r in range(2, ws.max_row + 1)
