@@ -19,12 +19,21 @@ def export_stock_image(xlsx_path, output_path):
     ws = wb['漲停候選']
     columns = [1, 2, 3, 4, 5, 18]  # 等級、代號、股名、有期貨、XGB信心%、漲停候選分數%
 
-    rows = [1] + [
+    def num(row, col):
+        try:
+            return float(ws.cell(row, col).value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    rows = [
         r for r in range(2, ws.max_row + 1)
-        if ws.cell(r, 1).value in ('A 強訊號', 'B XGB獨立')
-    ][:20]
+        if ws.cell(r, 1).value == 'A 強訊號'
+        and num(r, 5) >= 80
+        and num(r, 18) >= 90
+    ][:8]
+
     data = []
-    for r in rows:
+    for r in [1] + rows:
         row = []
         for c in columns:
             v = ws.cell(r, c).value
@@ -37,6 +46,8 @@ def export_stock_image(xlsx_path, output_path):
                 v = str(v).replace('✅', '有')
             row.append(v)
         data.append(row)
+    if not rows:
+        data.append(['無核心候選', '', '', '', '', ''])
 
     font_path = next((p for p in FONT_PATHS if Path(p).exists()), None)
     if not font_path:
@@ -62,7 +73,7 @@ def export_stock_image(xlsx_path, output_path):
     draw = ImageDraw.Draw(img)
     draw.text(
         (margin, margin - 2),
-        f'{Path(xlsx_path).stem}｜XGB × 漲停候選',
+        f'{Path(xlsx_path).stem}｜核心漲停候選',
         fill=(40, 40, 40),
         font=header_font
     )
