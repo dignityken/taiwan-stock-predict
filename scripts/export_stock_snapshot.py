@@ -12,12 +12,35 @@ def text_width(draw, text, font):
     return int(draw.textbbox((0, 0), str(text), font=font)[2])
 
 
-def export_stock_image(xlsx_path, output_path):
+def format_value(v):
+    if v is None:
+        return ''
+    if isinstance(v, float):
+        return f'{v:.1f}'.rstrip('0').rstrip('.')
+    # GitHub runners may not have emoji-capable fonts; use a plain marker.
+    return str(v).replace('✅', '有')
+
+
+def export_stock_image(xlsx_path, output_path, mode='limit'):
     wb = load_workbook(xlsx_path, data_only=True)
-    if '漲停候選' not in wb.sheetnames:
-        raise ValueError('找不到「漲停候選」工作表')
-    ws = wb['漲停候選']
-    columns = [1, 2, 3, 4, 5, 18]  # 等級、代號、股名、有期貨、XGB信心%、漲停候選分數%
+    if mode == 'xgb':
+        sheet_name = 'B_XGB獨立'
+        title = 'B XGB獨立'
+        columns = [1, 2, 3, 4, 5]  # 等級、代號、股名、有期貨、XGB信心%
+        max_rows = 20
+        row_filter = lambda r: True
+    else:
+        sheet_name = '漲停候選'
+        title = '核心漲停候選'
+        columns = [1, 2, 3, 4, 5, 18]  # 等級、代號、股名、有期貨、XGB信心%、漲停候選分數%
+        max_rows = 8
+
+        def row_filter(r):
+            return ws.cell(r, 1).value == 'A 強訊號' and num(r, 5) >= 80 and num(r, 18) >= 90
+
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f'找不到「{sheet_name}」工作表')
+    ws = wb[sheet_name]
 
     def num(row, col):
         try:
@@ -27,27 +50,14 @@ def export_stock_image(xlsx_path, output_path):
 
     rows = [
         r for r in range(2, ws.max_row + 1)
-        if ws.cell(r, 1).value == 'A 強訊號'
-        and num(r, 5) >= 80
-        and num(r, 18) >= 90
-    ][:8]
+        if row_filter(r)
+    ][:max_rows]
 
     data = []
     for r in [1] + rows:
-        row = []
-        for c in columns:
-            v = ws.cell(r, c).value
-            if v is None:
-                v = ''
-            elif isinstance(v, float):
-                v = f'{v:.1f}'.rstrip('0').rstrip('.')
-            else:
-                # GitHub runners may not have emoji-capable fonts; use a plain marker.
-                v = str(v).replace('✅', '有')
-            row.append(v)
-        data.append(row)
+        data.append([format_value(ws.cell(r, c).value) for c in columns])
     if not rows:
-        data.append(['無核心候選', '', '', '', '', ''])
+        data.append(['無資料'] + [''] * (len(columns) - 1))
 
     font_path = next((p for p in FONT_PATHS if Path(p).exists()), None)
     if not font_path:
@@ -73,7 +83,7 @@ def export_stock_image(xlsx_path, output_path):
     draw = ImageDraw.Draw(img)
     draw.text(
         (margin, margin - 2),
-        f'{Path(xlsx_path).stem}｜核心漲停候選',
+        f'{Path(xlsx_path).stem}｜{title}',
         fill=(40, 40, 40),
         font=header_font
     )
@@ -98,4 +108,4 @@ def export_stock_image(xlsx_path, output_path):
 
 if __name__ == '__main__':
     import sys
-    export_stock_image(sys.argv[1], sys.argv[2])
+    export_stock_image(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else 'limit')

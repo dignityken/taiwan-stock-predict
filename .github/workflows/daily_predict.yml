@@ -36,17 +36,20 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python predict.py
 
-      - name: Export limit-up candidates image
+      - name: Export Telegram images
         run: |
           latest_xlsx=$(ls -t results/*.xlsx | head -1)
-          png_path="${latest_xlsx%.xlsx}_漲停候選.png"
+          limit_png="${latest_xlsx%.xlsx}_漲停候選.png"
+          xgb_png="${latest_xlsx%.xlsx}_B_XGB獨立.png"
 
           echo "Latest Excel: $latest_xlsx"
-          echo "Output PNG: $png_path"
+          echo "Output PNG: $limit_png"
+          echo "Output PNG: $xgb_png"
 
-          python scripts/export_stock_snapshot.py "$latest_xlsx" "$png_path"
+          python scripts/export_stock_snapshot.py "$latest_xlsx" "$limit_png" limit
+          python scripts/export_stock_snapshot.py "$latest_xlsx" "$xgb_png" xgb
 
-          echo "STOCK_IMAGE=$png_path" >> "$GITHUB_ENV"
+          echo "STOCK_IMAGES=$limit_png|$xgb_png" >> "$GITHUB_ENV"
 
       - name: Send Telegram image
         env:
@@ -58,40 +61,30 @@ jobs:
             exit 0
           fi
 
-          if [ ! -f "$STOCK_IMAGE" ]; then
-            echo "Stock image not found: $STOCK_IMAGE"
-            exit 1
-          fi
+          IFS='|' read -ra images <<< "$STOCK_IMAGES"
+          for image in "${images[@]}"; do
+            if [ ! -f "$image" ]; then
+              echo "Stock image not found: $image"
+              exit 1
+            fi
 
-          caption="每日選股截圖：$(basename "$STOCK_IMAGE" .png)"
+            caption="每日選股截圖：$(basename "$image" .png)"
+            response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
+              -F chat_id="${TELEGRAM_CHAT_ID}" \
+              -F caption="${caption}" \
+              -F photo=@"${image}")
 
-          response=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendPhoto" \
-            -F chat_id="${TELEGRAM_CHAT_ID}" \
-            -F caption="${caption}" \
-            -F photo=@"${STOCK_IMAGE}")
-
-          echo "$response"
-
-          RESPONSE="$response" python - <<'PY'
-          import json
-          import os
-          import sys
-
-          response = os.environ["RESPONSE"]
-
-          try:
-              data = json.loads(response)
-          except Exception:
-              print("Telegram response is not valid JSON")
-              sys.exit(1)
-
+            echo "$response"
+            RESPONSE="$response" python - <<'PY'
+          import json, os, sys
+          data = json.loads(os.environ["RESPONSE"])
           if not data.get("ok"):
               print("Telegram sendPhoto failed:")
               print(data)
               sys.exit(1)
-
           print("Telegram image sent successfully.")
           PY
+          done
 
       - name: Commit results
         run: |
