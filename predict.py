@@ -245,6 +245,17 @@ def analyze_stock(item, base_date):
     tree_pred = int(tree_model.predict(latest)[0])
     tree_prob = round(float(tree_model.predict_proba(latest)[0][1]) * 100, 1)
 
+    # 資料新鮮度檢查：法人/持股若落後價格日，特徵會被 fillna/ffill 靜默失真
+    price_last = df_price['Date'].max()
+    data_warns = []
+    if pd.Timestamp(base_date).normalize() > prediction_date:
+        data_warns.append(f"價格落後{(pd.Timestamp(base_date).normalize() - prediction_date).days}日")
+    if f['Date'].max() < price_last:
+        data_warns.append(f"法人落後{(price_last - f['Date'].max()).days}日")
+    if df_hold['Date'].max() < price_last:
+        data_warns.append(f"持股落後{(price_last - df_hold['Date'].max()).days}日")
+    # ponytail: 借券資料本來就是 T+1，檢查它只會天天誤報，故不查
+
     if   xgb_pred == 1 and tree_pred == 1: grade = "A 強訊號"
     elif xgb_pred == 1 and tree_pred == 0: grade = "B XGB獨立"
     elif xgb_pred == 0 and tree_pred == 1: grade = "C Tree獨立"
@@ -256,6 +267,7 @@ def analyze_stock(item, base_date):
         "XGB信心%": xgb_prob, "Tree信心%": tree_prob,
         "xgboost": xgb_pred, "s_Tree": tree_pred,
         "模型資料日": prediction_date.strftime("%Y-%m-%d"),
+        "資料警告": "、".join(data_warns),
         "XGB驗證精準率%": round(validation_precision * 100, 1),
         "驗證基準命中率%": round(validation_base_rate * 100, 1),
         "預測日收盤": close_px,
@@ -357,6 +369,9 @@ result_df = result_df.sort_values(
 ).drop(columns='等級排序').reset_index(drop=True)
 
 # 摘要
+warned = result_df[result_df['資料警告'] != '']
+if len(warned):
+    print(f"\n⚠️ {len(warned)} 檔資料新鮮度警告（詳見 xlsx 資料警告欄）")
 print("\n" + "=" * 50)
 for grade in ["A 強訊號", "B XGB獨立", "C Tree獨立"]:
     sub = result_df[result_df['等級'] == grade]

@@ -2,7 +2,7 @@ name: 每日選股預測
 
 on:
   schedule:
-    - cron: '0 17 * * 0-4'   # UTC 17:00 = 台灣時間 01:00，週一～週五
+    - cron: '0 19 * * 0-4'   # UTC 19:00 = 台灣時間 03:00，週一～週五（給 FinMind 持股/法人資料更多同步時間）
   workflow_dispatch:           # 允許手動觸發（使用當下前一個交易日）
 
 permissions:

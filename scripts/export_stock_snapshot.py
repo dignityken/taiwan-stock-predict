@@ -23,30 +23,33 @@ def format_value(v):
 
 def export_stock_image(xlsx_path, output_path, mode='limit'):
     wb = load_workbook(xlsx_path, data_only=True)
-    if mode == 'xgb':
-        sheet_name = 'B_XGB獨立'
-        title = 'B XGB獨立'
-        columns = [1, 2, 3, 4, 5]  # 等級、代號、股名、有期貨、XGB信心%
-        max_rows = 20
-        row_filter = lambda r: True
-    else:
-        sheet_name = '漲停候選'
-        title = '核心漲停候選'
-        columns = [1, 2, 3, 4, 5, 18]  # 等級、代號、股名、有期貨、XGB信心%、漲停候選分數%
-        max_rows = 8
-
-        def row_filter(r):
-            return ws.cell(r, 1).value == 'A 強訊號' and num(r, 5) >= 80 and num(r, 18) >= 90
-
+    sheet_name = 'B_XGB獨立' if mode == 'xgb' else '漲停候選'
     if sheet_name not in wb.sheetnames:
         raise ValueError(f'找不到「{sheet_name}」工作表')
     ws = wb[sheet_name]
+    # 用表頭名稱找欄位，避免新增欄位時位置跑掉
+    header = {ws.cell(1, c).value: c for c in range(1, ws.max_column + 1)}
 
     def num(row, col):
         try:
             return float(ws.cell(row, col).value)
         except (TypeError, ValueError):
             return 0.0
+
+    if mode == 'xgb':
+        title = 'B XGB獨立'
+        columns = [header[n] for n in ('等級', '代號', '股名', '有期貨', 'XGB信心%')]
+        max_rows = 20
+        row_filter = lambda r: True
+    else:
+        title = '核心漲停候選'
+        columns = [header[n] for n in ('等級', '代號', '股名', '有期貨', 'XGB信心%', '漲停候選分數%')]
+        max_rows = 8
+
+        def row_filter(r):
+            return (ws.cell(r, header['等級']).value == 'A 強訊號'
+                    and num(r, header['XGB信心%']) >= 80
+                    and num(r, header['漲停候選分數%']) >= 90)
 
     rows = [
         r for r in range(2, ws.max_row + 1)
