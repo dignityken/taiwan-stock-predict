@@ -266,7 +266,7 @@ def analyze_stock(item, base_date):
         "買超排名": item['rank'],
     }
     limit_train, limit_latest, _ = prepare_training_data(
-        df, LIMIT_FEATURES, prediction_date, target_return=0.095
+        df, LIMIT_FEATURES, prediction_date, target_return=0.095, target_mode="high"
     )
     limit_train["代號"] = sid
     limit_latest["代號"] = sid
